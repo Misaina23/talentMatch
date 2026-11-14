@@ -111,6 +111,12 @@ export interface MessageRecord {
   createdAt: string;
 }
 
+export interface CVAuditResult {
+  completenessPct: number;
+  strengths: string[];
+  improvements: string[];
+}
+
 export interface ParsedCVResult {
   fullName: string;
   headline: string;
@@ -126,4 +132,6 @@ export interface ParsedCVResult {
   languages: LanguageItem[];
   rawText?: string;
   parserMode: 'gemini' | 'heuristic';
+  audit: CVAuditResult;
 }
+

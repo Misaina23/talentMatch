@@ -3,6 +3,7 @@ import {
   CandidateProfile,
   ChatMessage,
   ConversationSummary,
+  CVAudit,
   Job,
   ParsedCV,
   User,
@@ -141,16 +142,28 @@ export const api = {
     return request<{ applications: Application[] }>('/api/applications/mine');
   },
 
+  async updateApplicationStatus(
+    applicationId: string,
+    status: Application['status']
+  ): Promise<{ application: Application }> {
+    return request<{ application: Application }>(`/api/applications/${applicationId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
+  },
+
   async listCandidates(): Promise<{ candidates: CandidateProfile[] }> {
     return request<{ candidates: CandidateProfile[] }>('/api/candidates');
   },
 
-  async getMyProfile(): Promise<{ profile: CandidateProfile | null }> {
-    return request<{ profile: CandidateProfile | null }>('/api/profile/me');
+  async getMyProfile(): Promise<{ profile: CandidateProfile | null; audit?: CVAudit | null }> {
+    return request<{ profile: CandidateProfile | null; audit?: CVAudit | null }>('/api/profile/me');
   },
 
-  async updateMyProfile(profile: Partial<CandidateProfile>): Promise<{ profile: CandidateProfile }> {
-    return request<{ profile: CandidateProfile }>('/api/profile/me', {
+  async updateMyProfile(
+    profile: Partial<CandidateProfile>
+  ): Promise<{ profile: CandidateProfile; audit?: CVAudit | null }> {
+    return request<{ profile: CandidateProfile; audit?: CVAudit | null }>('/api/profile/me', {
       method: 'PUT',
       body: JSON.stringify(profile),
     });
@@ -163,15 +176,33 @@ export const api = {
     });
   },
 
+  async improveCV(
+    profile: CandidateProfile,
+    targetRole?: string
+  ): Promise<{
+    headline: string;
+    summary: string;
+    experiences: CandidateProfile['experiences'];
+    suggestions: string[];
+    mode: 'gemini' | 'local';
+  }> {
+    return request('/api/cv/improve', {
+      method: 'POST',
+      body: JSON.stringify({ profile, targetRole }),
+    });
+  },
+
   async generatePortfolio(payload: {
     profile: CandidateProfile;
     framework: 'tailwind' | 'bootstrap';
     style: 'editorial' | 'dark-tech' | 'corporate';
+    targetObjective?: string;
   }): Promise<{
     html: string;
     framework: 'tailwind' | 'bootstrap';
     style: 'editorial' | 'dark-tech' | 'corporate';
     generatedBy: 'gemini' | 'template';
+    detectedDomain?: string;
   }> {
     return request('/api/portfolio/generate', {
       method: 'POST',

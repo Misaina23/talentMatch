@@ -2,9 +2,9 @@ import bcrypt from 'bcryptjs';
 import cors from 'cors';
 import express from 'express';
 import multer from 'multer';
-import { computeSkillMatch, repository } from './db/repository.ts';
+import { computeDetailedMatch, repository } from './db/repository.ts';
 import { AuthRequest, optionalAuth, requireAuth, signAuthToken } from './middleware/auth.ts';
-import { parseResumeIntelligently } from './services/cvParser.ts';
+import { auditCVQuality, enhanceCVWithAI, parseResumeIntelligently } from './services/cvParser.ts';
 import {
   generatePortfolioFromCV,
   PortfolioFramework,
@@ -175,15 +175,36 @@ export function createApiApp() {
   app.get('/api/jobs', optionalAuth, async (req: AuthRequest, res) => {
     try {
       const jobs = await repository.listJobs();
-      let candidateSkills: string[] = [];
+      let candidateProfile = null;
       if (req.authUser?.role === 'candidate') {
-        const profile = await repository.getCandidateProfileByUserId(req.authUser.userId);
-        candidateSkills = profile?.skills ?? [];
+        candidateProfile = await repository.getCandidateProfileByUserId(req.authUser.userId);
       }
-      const enriched = jobs.map((j) => ({
-        ...j,
-        matchScore: candidateSkills.length ? computeSkillMatch(candidateSkills, j.requirements) : null,
-      }));
+      const enriched = jobs.map((j) => {
+        if (!candidateProfile) {
+          return { ...j, matchScore: null, matchedSkills: [], missingSkills: [], matchReason: null };
+        }
+        const match = computeDetailedMatch(
+          {
+            skills: candidateProfile.skills,
+            headline: candidateProfile.headline,
+            experienceYears: candidateProfile.experienceYears,
+            location: candidateProfile.location,
+          },
+          {
+            title: j.title,
+            requirements: j.requirements,
+            location: j.location,
+            workMode: j.workMode,
+          }
+        );
+        return {
+          ...j,
+          matchScore: match.score,
+          matchedSkills: match.matchedSkills,
+          missingSkills: match.missingSkills,
+          matchReason: match.summaryReason,
+        };
+      });
       res.json({ jobs: enriched });
     } catch (error) {
       console.error('List jobs error:', error);
@@ -248,6 +269,23 @@ export function createApiApp() {
     }
   });
 
+  app.patch('/api/applications/:id/status', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      if (req.authUser!.role !== 'recruiter') {
+        return res.status(403).json({ error: 'Réservé aux recruteurs.' });
+      }
+      const status = req.body?.status;
+      if (!['pending', 'shortlisted', 'interview', 'rejected'].includes(status)) {
+        return res.status(400).json({ error: 'Statut de candidature invalide.' });
+      }
+      const application = await repository.updateApplicationStatus(req.params.id, req.authUser!.userId, status);
+      res.json({ application });
+    } catch (error) {
+      console.error('Update application status error:', error);
+      res.status(400).json({ error: error instanceof Error ? error.message : 'Erreur de mise à jour.' });
+    }
+  });
+
   // --- Candidates & Profiles ---
   app.get('/api/candidates', optionalAuth, async (_req, res) => {
     try {
@@ -262,7 +300,8 @@ export function createApiApp() {
   app.get('/api/profile/me', requireAuth, async (req: AuthRequest, res) => {
     try {
       const profile = await repository.getCandidateProfileByUserId(req.authUser!.userId);
-      res.json({ profile });
+      const audit = profile ? auditCVQuality(profile) : null;
+      res.json({ profile, audit });
     } catch (error) {
       console.error('Get profile error:', error);
       res.status(500).json({ error: 'Impossible de charger votre profil.' });
@@ -272,7 +311,8 @@ export function createApiApp() {
   app.put('/api/profile/me', requireAuth, async (req: AuthRequest, res) => {
     try {
       const profile = await repository.upsertCandidateProfile(req.authUser!.userId, req.body);
-      res.json({ profile });
+      const audit = auditCVQuality(profile);
+      res.json({ profile, audit });
     } catch (error) {
       console.error('Update profile error:', error);
       res.status(500).json({ error: 'Impossible de sauvegarder votre profil CV.' });
@@ -324,13 +364,36 @@ export function createApiApp() {
     }
   });
 
+  // --- CV Quality Optimization ---
+  app.post('/api/cv/improve', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const { profile, targetRole } = req.body;
+      if (!profile || !profile.fullName) {
+        return res.status(400).json({ error: 'Données CV requises pour l’optimisation.' });
+      }
+      const improved = await enhanceCVWithAI({
+        fullName: String(profile.fullName || ''),
+        headline: String(profile.headline || ''),
+        summary: String(profile.summary || ''),
+        skills: Array.isArray(profile.skills) ? profile.skills : [],
+        experiences: Array.isArray(profile.experiences) ? profile.experiences : [],
+        targetRole: typeof targetRole === 'string' ? targetRole : undefined,
+      });
+      res.json(improved);
+    } catch (error) {
+      console.error('CV Improve error:', error);
+      res.status(500).json({ error: 'Impossible d’optimiser le CV pour le moment.' });
+    }
+  });
+
   // --- Portfolio Generator from CV (HTML + Tailwind/Bootstrap + JS) ---
   app.post('/api/portfolio/generate', optionalAuth, async (req: AuthRequest, res) => {
     try {
-      const { profile, framework, style } = req.body as {
+      const { profile, framework, style, targetObjective } = req.body as {
         profile?: any;
         framework?: PortfolioFramework;
         style?: PortfolioStyle;
+        targetObjective?: string;
       };
 
       if (!profile || !profile.fullName) {
@@ -358,6 +421,7 @@ export function createApiApp() {
           experiences: Array.isArray(profile.experiences) ? profile.experiences : [],
           education: Array.isArray(profile.education) ? profile.education : [],
           languages: Array.isArray(profile.languages) ? profile.languages : [],
+          targetObjective: typeof targetObjective === 'string' ? targetObjective : undefined,
         },
         framework: fw,
         style: st,

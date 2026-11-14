@@ -69,6 +69,9 @@ export interface Job {
   status: 'open' | 'closed';
   createdAt: string;
   matchScore?: number | null;
+  matchedSkills?: string[];
+  missingSkills?: string[];
+  matchReason?: string | null;
 }
 
 export interface Application {
@@ -104,6 +107,12 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+export interface CVAudit {
+  completenessPct: number;
+  strengths: string[];
+  improvements: string[];
+}
+
 export interface ParsedCV {
   fullName: string;
   headline: string;
@@ -119,6 +128,7 @@ export interface ParsedCV {
   languages: LanguageItem[];
   rawText?: string;
   parserMode: 'gemini' | 'heuristic';
+  audit?: CVAudit;
 }
 
 export type ActiveTab = 'jobs' | 'talents' | 'cv-studio' | 'messages';

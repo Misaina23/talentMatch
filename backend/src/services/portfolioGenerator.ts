@@ -18,6 +18,7 @@ export interface PortfolioInputProfile {
   experiences: ExperienceItem[];
   education: EducationItem[];
   languages: LanguageItem[];
+  targetObjective?: string;
 }
 
 interface PortfolioCopy {
@@ -56,8 +57,38 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 2, timeoutMs = 12000): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await Promise.race([
+        fn(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Gemini request timeout')), timeoutMs)
+        ),
+      ]);
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxAttempts - 1) {
+        const delay = 400 * Math.pow(2, attempt);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+
+function detectDomain(profile: PortfolioInputProfile): 'design' | 'data-ai' | 'engineering' | 'business' {
+  const blob = `${profile.headline} ${profile.skills.join(' ')}`.toLowerCase();
+  if (/(figma|ux|ui|design system|ergonomie|product design)/.test(blob)) return 'design';
+  if (/(python|nlp|data|ai|ia|machine learning|llm|sql)/.test(blob)) return 'data-ai';
+  if (/(react|typescript|node|postgresql|docker|full-stack|devops|cloud|java|go)/.test(blob)) return 'engineering';
+  return 'business';
+}
+
 function buildFallbackCopy(profile: PortfolioInputProfile): PortfolioCopy {
   const topSkills = profile.skills.slice(0, 6);
+  const domain = detectDomain(profile);
   const projects =
     profile.experiences.length > 0
       ? profile.experiences.map((exp, idx) => ({
@@ -73,7 +104,7 @@ function buildFallbackCopy(profile: PortfolioInputProfile): PortfolioCopy {
         }))
       : [
           {
-            title: profile.headline || 'Réalisation Principale',
+            title: profile.targetObjective || profile.headline || 'Réalisation Principale',
             context: profile.location || 'Portfolio Professionnel',
             summary:
               profile.summary ||
@@ -83,9 +114,19 @@ function buildFallbackCopy(profile: PortfolioInputProfile): PortfolioCopy {
           },
         ];
 
+  const domainTagline =
+    profile.targetObjective?.trim() ||
+    profile.headline ||
+    (domain === 'design'
+      ? 'Design Produit, Systèmes & Expériences Centrées Utilisateur'
+      : domain === 'data-ai'
+      ? 'Ingénierie Data, IA & Extraction Documentaire'
+      : domain === 'engineering'
+      ? 'Architecture Logicielle & Systèmes Web Scalables'
+      : 'Pilotage de Projets & Performance Opérationnelle');
+
   return {
-    heroTagline:
-      profile.headline || 'Professionnel orienté impact, conception et exécution',
+    heroTagline: domainTagline,
     aboutLead:
       profile.summary ||
       `${profile.fullName} accompagne les équipes et entreprises grâce à une maîtrise approfondie de ${topSkills.join(', ') || 'son domaine'}.`,
@@ -103,43 +144,45 @@ async function enrichPortfolioCopyWithGemini(
 
   try {
     const prompt = `Tu es un directeur artistique et rédacteur de portfolios professionnels.
-À partir uniquement des données du CV ci-dessous (ne jamais inventer de fausses entreprises ou diplômes), rédige :
-1. heroTagline : une phrase d'accroche courte et percutante (max 16 mots) pour le hero du portfolio.
-2. aboutLead : un paragraphe fluide à la 1ère ou 3ème personne présentant le profil (max 55 mots).
+À partir uniquement des données du CV ci-dessous (ne jamais inventer de fausses entreprises ou diplômes), rédige en français professionnel :
+1. heroTagline : une phrase d'accroche courte et percutante (max 16 mots) pour le hero du portfolio${profile.targetObjective ? `, orientée vers l'objectif : "${profile.targetObjective}"` : ''}.
+2. aboutLead : un paragraphe fluide présentant le profil et sa proposition de valeur (max 60 mots).
 3. projects : entre 2 et 4 cartes "Réalisations / Projets" directement basées sur les expériences et compétences du CV (title, context, summary, tags, impact).
 
 CV JSON :
 ${JSON.stringify(profile)}`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            heroTagline: { type: Type.STRING },
-            aboutLead: { type: Type.STRING },
-            projects: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  context: { type: Type.STRING },
-                  summary: { type: Type.STRING },
-                  tags: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  impact: { type: Type.STRING },
+    const response = await withRetry(() =>
+      ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              heroTagline: { type: Type.STRING },
+              aboutLead: { type: Type.STRING },
+              projects: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    context: { type: Type.STRING },
+                    summary: { type: Type.STRING },
+                    tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    impact: { type: Type.STRING },
+                  },
+                  required: ['title', 'context', 'summary', 'tags', 'impact'],
                 },
-                required: ['title', 'context', 'summary', 'tags', 'impact'],
               },
             },
+            required: ['heroTagline', 'aboutLead', 'projects'],
           },
-          required: ['heroTagline', 'aboutLead', 'projects'],
         },
-      },
-    });
+      })
+    );
 
     const parsed = JSON.parse((response.text ?? '{}').trim()) as Partial<PortfolioCopy>;
     if (parsed.heroTagline && parsed.aboutLead && Array.isArray(parsed.projects) && parsed.projects.length > 0) {
@@ -799,17 +842,22 @@ export async function generatePortfolioFromCV(input: {
   framework: PortfolioFramework;
   style: PortfolioStyle;
   generatedBy: 'gemini' | 'template';
+  detectedDomain: string;
 }> {
   const { copy, generatedBy } = await enrichPortfolioCopyWithGemini(input.profile);
-  const html =
+  const rawHtml =
     input.framework === 'bootstrap'
       ? renderBootstrapPortfolio(input.profile, copy, input.style)
       : renderTailwindPortfolio(input.profile, copy, input.style);
+
+  const seoMeta = `<meta name="description" content="${escapeHtml(copy.aboutLead)}" />\n  <meta property="og:title" content="${escapeHtml(input.profile.fullName)} — ${escapeHtml(input.profile.headline)}" />\n  <meta property="og:description" content="${escapeHtml(copy.heroTagline)}" />`;
+  const html = rawHtml.replace('</head>', `  ${seoMeta}\n</head>`);
 
   return {
     html,
     framework: input.framework,
     style: input.style,
     generatedBy,
+    detectedDomain: detectDomain(input.profile),
   };
 }

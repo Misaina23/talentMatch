@@ -11,9 +11,17 @@ interface JobsViewProps {
   onSearchQueryChange: (q: string) => void;
   onJobCreated: (job: Job) => void;
   onApplicationSubmitted: (app: Application) => void;
+  onApplicationUpdated?: (app: Application) => void;
   onStartChat: (recruiterId: string, jobId: string) => void;
   onRequireAuth: () => void;
 }
+
+const APPLICATION_STATUS_LABELS: Record<Application['status'], string> = {
+  pending: 'En attente',
+  shortlisted: 'Présélectionné',
+  interview: 'Entretien',
+  rejected: 'Non retenu',
+};
 
 export function JobsView({
   jobs,
@@ -23,6 +31,7 @@ export function JobsView({
   onSearchQueryChange,
   onJobCreated,
   onApplicationSubmitted,
+  onApplicationUpdated,
   onStartChat,
   onRequireAuth,
 }: JobsViewProps) {
@@ -31,6 +40,7 @@ export function JobsView({
   const [selectedJobId, setSelectedJobId] = useState<string>(jobs[0]?.id || '');
   const [coverNote, setCoverNote] = useState('');
   const [applying, setApplying] = useState(false);
+  const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -64,9 +74,37 @@ export function JobsView({
   const selectedJob =
     filteredJobs.find((j) => j.id === selectedJobId) || filteredJobs[0] || null;
 
-  const alreadyApplied = selectedJob
-    ? applications.some((a) => a.jobId === selectedJob.id)
-    : false;
+  const candidateApplication = selectedJob
+    ? applications.find((a) => a.jobId === selectedJob.id) || null
+    : null;
+  const alreadyApplied = Boolean(candidateApplication);
+
+  const jobApplications = useMemo(() => {
+    if (!selectedJob) return [];
+    return applications
+      .filter((a) => a.jobId === selectedJob.id)
+      .sort((a, b) => b.matchScore - a.matchScore);
+  }, [applications, selectedJob]);
+
+  const handleStatusChange = async (applicationId: string, status: Application['status']) => {
+    setUpdatingStatusId(applicationId);
+    setFeedback(null);
+    try {
+      const { application } = await api.updateApplicationStatus(applicationId, status);
+      onApplicationUpdated?.(application);
+      setFeedback({
+        type: 'success',
+        text: `Statut mis à jour : ${APPLICATION_STATUS_LABELS[status]}.`,
+      });
+    } catch (err) {
+      setFeedback({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Impossible de mettre à jour le statut.',
+      });
+    } finally {
+      setUpdatingStatusId(null);
+    }
+  };
 
   const handleApply = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -414,10 +452,44 @@ export function JobsView({
                 </p>
               </div>
 
+              {user?.role !== 'recruiter' && typeof selectedJob.matchScore === 'number' && (
+                <div className="pt-4 border-t border-slate-200 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold text-slate-900">Analyse de compatibilité</h3>
+                    <span className="font-mono text-xs font-semibold text-emerald-700 tabular-nums">
+                      {selectedJob.matchScore}% d’adéquation
+                    </span>
+                  </div>
+                  {selectedJob.matchReason && (
+                    <p className="text-xs text-slate-600">{selectedJob.matchReason}</p>
+                  )}
+                  {selectedJob.matchedSkills && selectedJob.matchedSkills.length > 0 && (
+                    <p className="text-xs text-slate-700">
+                      <span className="font-semibold text-emerald-700">Points alignés :</span>{' '}
+                      {selectedJob.matchedSkills.join(' · ')}
+                    </p>
+                  )}
+                  {selectedJob.missingSkills && selectedJob.missingSkills.length > 0 && (
+                    <p className="text-xs text-slate-600">
+                      <span className="font-semibold text-slate-800">À valoriser ou acquérir :</span>{' '}
+                      {selectedJob.missingSkills.join(' · ')}
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Actions */}
               <div className="pt-4 border-t border-slate-200 space-y-4">
                 {user?.role !== 'recruiter' ? (
                   <form onSubmit={handleApply} className="space-y-3">
+                    {candidateApplication && (
+                      <p className="text-xs font-medium text-emerald-700">
+                        Candidature envoyée · Statut actuel :{' '}
+                        <span className="font-semibold">
+                          {APPLICATION_STATUS_LABELS[candidateApplication.status]}
+                        </span>
+                      </p>
+                    )}
                     <label className="block text-xs font-medium text-slate-700">
                       Message d’accompagnement pour le recruteur (optionnel)
                     </label>
@@ -432,7 +504,7 @@ export function JobsView({
                       <button
                         type="submit"
                         disabled={applying || alreadyApplied}
-                        className="px-5 py-2.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg disabled:opacity-60 transition-colors cursor-pointer whitespace-nowrap"
+                        className="px-5 py-2.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg disabled:opacity-60 transition-colors cursor-pointer whitespace-nowrap shrink-0"
                       >
                         {alreadyApplied
                           ? 'Déjà postulé'
@@ -450,7 +522,7 @@ export function JobsView({
                             onStartChat(selectedJob.recruiterId, selectedJob.id);
                           }
                         }}
-                        className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                        className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
                       >
                         <MessageSquare className="w-4 h-4" />
                         Contacter le recruteur
@@ -458,8 +530,72 @@ export function JobsView({
                     </div>
                   </form>
                 ) : (
-                  <div className="text-xs text-slate-500">
-                    Connecté en mode Recruteur — basculez sur l’onglet Talents pour sourcer des candidats ou sur Messagerie pour répondre aux candidatures.
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        Candidatures reçues sur ce poste ({jobApplications.length})
+                      </h3>
+                      <span className="text-xs text-slate-500 tabular-nums">
+                        Total portefeuille : {applications.length}
+                      </span>
+                    </div>
+
+                    {jobApplications.length === 0 ? (
+                      <p className="text-xs text-slate-500">
+                        Aucune candidature reçue sur cette offre pour le moment. Vous pouvez également sourcer directement dans l’onglet Talents.
+                      </p>
+                    ) : (
+                      <div className="divide-y divide-slate-200 border-t border-b border-slate-200">
+                        {jobApplications.map((app) => (
+                          <div
+                            key={app.id}
+                            className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                          >
+                            <div className="min-w-0 space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-sm font-semibold text-slate-900">
+                                  {app.candidateName || 'Candidat'}
+                                </span>
+                                <span className="font-mono text-xs font-semibold text-emerald-700 tabular-nums">
+                                  {app.matchScore}% match
+                                </span>
+                              </div>
+                              {app.candidateHeadline && (
+                                <p className="text-xs text-slate-600">{app.candidateHeadline}</p>
+                              )}
+                              {app.coverNote && (
+                                <p className="text-xs text-slate-500 line-clamp-2">{app.coverNote}</p>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <select
+                                value={app.status}
+                                disabled={updatingStatusId === app.id}
+                                onChange={(e) =>
+                                  handleStatusChange(app.id, e.target.value as Application['status'])
+                                }
+                                aria-label={`Statut de ${app.candidateName || 'candidat'}`}
+                                className="px-2.5 py-1.5 text-xs font-medium bg-white border border-slate-300 rounded-lg text-slate-700 focus:outline-none focus:border-blue-700"
+                              >
+                                <option value="pending">En attente</option>
+                                <option value="shortlisted">Présélectionné</option>
+                                <option value="interview">Entretien</option>
+                                <option value="rejected">Non retenu</option>
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() => onStartChat(app.candidateId, selectedJob.id)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                              >
+                                <MessageSquare className="w-3.5 h-3.5" />
+                                Contacter
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

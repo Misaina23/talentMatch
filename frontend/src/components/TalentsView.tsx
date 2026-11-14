@@ -13,13 +13,35 @@ interface TalentsViewProps {
   onRequireAuth: () => void;
 }
 
+const SKILL_SYNONYMS: string[][] = [
+  ['typescript', 'ts'],
+  ['javascript', 'js'],
+  ['postgresql', 'postgres', 'sql'],
+  ['node.js', 'nodejs', 'node'],
+  ['react', 'reactjs'],
+  ['tailwind css', 'tailwind'],
+  ['kubernetes', 'k8s'],
+  ['design systems', 'design system'],
+  ['ux research', 'ux', 'figma'],
+  ['nlp', 'ia', 'ai', 'llm'],
+  ['websockets', 'websocket', 'ws'],
+];
+
+function normalizeSkill(raw: string): string {
+  const clean = raw.trim().toLowerCase();
+  for (const group of SKILL_SYNONYMS) {
+    if (group.includes(clean)) return group[0];
+  }
+  return clean;
+}
+
 function computeCandidateJobMatch(skills: string[], requirements: string[]): number {
   if (!requirements.length) return 75;
-  const norm = new Set(skills.map((s) => s.toLowerCase()));
+  const norm = skills.map(normalizeSkill);
   let hits = 0;
   for (const r of requirements) {
-    const rl = r.toLowerCase();
-    if (norm.has(rl) || Array.from(norm).some((s) => s.includes(rl) || rl.includes(s))) {
+    const rn = normalizeSkill(r);
+    if (norm.some((s) => s === rn || (s.length >= 3 && rn.length >= 3 && (s.includes(rn) || rn.includes(s))))) {
       hits += 1;
     }
   }

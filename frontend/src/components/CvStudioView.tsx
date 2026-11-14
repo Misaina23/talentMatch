@@ -7,17 +7,19 @@ import {
   Plus,
   Printer,
   Save,
+  Sparkles,
   Trash2,
   Upload,
 } from 'lucide-react';
 import { api } from '../lib/api.ts';
-import { CandidateProfile, ParsedCV, User } from '../types.ts';
+import { CandidateProfile, CVAudit, ParsedCV, User } from '../types.ts';
 import { PortfolioGeneratorPanel } from './PortfolioGeneratorPanel.tsx';
 
 interface CvStudioViewProps {
   user: User | null;
   profile: CandidateProfile | null;
-  onProfileUpdated: (profile: CandidateProfile) => void;
+  audit?: CVAudit | null;
+  onProfileUpdated: (profile: CandidateProfile, audit?: CVAudit | null) => void;
   onRequireAuth: () => void;
 }
 
@@ -84,6 +86,7 @@ const EMPTY_PROFILE: CandidateProfile = {
 export function CvStudioView({
   user,
   profile,
+  audit,
   onProfileUpdated,
   onRequireAuth,
 }: CvStudioViewProps) {
@@ -96,6 +99,9 @@ export function CvStudioView({
   const [rawCvText, setRawCvText] = useState('');
   const [parsing, setParsing] = useState(false);
   const [parsedResult, setParsedResult] = useState<ParsedCV | null>(null);
+  const [localAudit, setLocalAudit] = useState<CVAudit | null>(audit ?? null);
+  const [improving, setImproving] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -111,12 +117,18 @@ export function CvStudioView({
     }
   }, [profile, user]);
 
+  useEffect(() => {
+    if (audit !== undefined) {
+      setLocalAudit(audit);
+    }
+  }, [audit]);
+
   const handleParseAndAutoLoad = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedFile && !rawCvText.trim()) {
       setNotice({
         type: 'error',
-        text: 'Sélectionnez un fichier CV (PDF, TXT, PNG/JPG) ou collez le contenu texte de votre CV.',
+        text: 'Sélectionnez un fichier CV (PDF, DOCX, TXT, PNG/JPG) ou collez le contenu texte de votre CV.',
       });
       return;
     }
@@ -135,6 +147,9 @@ export function CvStudioView({
 
       const { parsed, savedProfile } = await api.parseCV(formData);
       setParsedResult(parsed);
+      if (parsed.audit) {
+        setLocalAudit(parsed.audit);
+      }
 
       const mergedDraft: CandidateProfile = {
         ...draft,
@@ -154,7 +169,7 @@ export function CvStudioView({
       setDraft(mergedDraft);
 
       if (savedProfile) {
-        onProfileUpdated(savedProfile);
+        onProfileUpdated(savedProfile, parsed.audit ?? localAudit);
         setNotice({
           type: 'success',
           text: 'CV analysé et chargé automatiquement dans votre profil TalentMatch.',
@@ -184,8 +199,11 @@ export function CvStudioView({
     setSaving(true);
     setNotice(null);
     try {
-      const { profile: updated } = await api.updateMyProfile(draft);
-      onProfileUpdated(updated);
+      const { profile: updated, audit: nextAudit } = await api.updateMyProfile(draft);
+      if (nextAudit) {
+        setLocalAudit(nextAudit);
+      }
+      onProfileUpdated(updated, nextAudit);
       setNotice({ type: 'success', text: 'Profil CV enregistré et synchronisé dans TalentMatch.' });
     } catch (err) {
       setNotice({
@@ -194,6 +212,35 @@ export function CvStudioView({
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleImproveCV = async () => {
+    setImproving(true);
+    setNotice(null);
+    try {
+      const result = await api.improveCV(draft, draft.headline);
+      setDraft((prev) => ({
+        ...prev,
+        headline: result.headline || prev.headline,
+        summary: result.summary || prev.summary,
+        experiences: result.experiences?.length ? result.experiences : prev.experiences,
+      }));
+      setAiSuggestions(result.suggestions || []);
+      setNotice({
+        type: 'success',
+        text:
+          result.mode === 'gemini'
+            ? 'Rédaction du CV optimisée via Gemini sans inventer d’informations.'
+            : 'Rédaction du CV restructurée localement pour plus d’impact.',
+      });
+    } catch (err) {
+      setNotice({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Erreur lors de l’optimisation du CV.',
+      });
+    } finally {
+      setImproving(false);
     }
   };
 
@@ -315,7 +362,7 @@ export function CvStudioView({
           >
             <div className="space-y-1">
               <h3 className="text-base font-semibold text-slate-900">
-                1. Importer votre CV (PDF, image, TXT ou texte brut)
+                1. Importer votre CV (PDF, DOCX, image, TXT ou texte brut)
               </h3>
               <p className="text-xs text-slate-500">
                 Le moteur TalentMatch extrait automatiquement identité, titre, compétences, expériences et formations.
@@ -325,7 +372,7 @@ export function CvStudioView({
             <label className="block border-2 border-dashed border-slate-300 hover:border-blue-700 rounded-xl p-6 text-center cursor-pointer transition-colors bg-slate-50/70">
               <input
                 type="file"
-                accept=".pdf,.txt,.md,.png,.jpg,.jpeg"
+                accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg"
                 onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
                 className="sr-only"
               />
@@ -334,7 +381,7 @@ export function CvStudioView({
                 {selectedFile ? selectedFile.name : 'Choisir un fichier CV sur votre appareil'}
               </p>
               <p className="text-xs text-slate-500 mt-1">
-                Formats pris en charge : PDF, TXT, Markdown, PNG, JPG (max 8 Mo)
+                Formats pris en charge : PDF, DOCX, TXT, Markdown, PNG, JPG (max 8 Mo)
               </p>
             </label>
 
@@ -409,6 +456,35 @@ export function CvStudioView({
                 </p>
               </div>
             )}
+
+            {localAudit && (
+              <div className="pt-4 border-t border-slate-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-900">Qualité du CV</span>
+                  <span className="font-mono text-xs font-bold text-blue-700 tabular-nums">
+                    {localAudit.completenessPct}%
+                  </span>
+                </div>
+                <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-700 transition-all"
+                    style={{ width: `${localAudit.completenessPct}%` }}
+                  />
+                </div>
+                {localAudit.strengths.length > 0 && (
+                  <p className="text-xs text-emerald-700">
+                    Points forts : {localAudit.strengths.join(' · ')}
+                  </p>
+                )}
+                {localAudit.improvements.length > 0 && (
+                  <ul className="text-xs text-slate-600 space-y-1">
+                    {localAudit.improvements.map((imp) => (
+                      <li key={imp}>• {imp}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </div>
         </div>
       ) : (
@@ -432,11 +508,20 @@ export function CvStudioView({
                 ))}
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleImproveCV}
+                  disabled={improving}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg disabled:opacity-60 cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {improving ? 'Optimisation...' : 'Optimiser la rédaction'}
+                </button>
                 <button
                   type="button"
                   onClick={() => setStudioMode('portfolio')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg cursor-pointer whitespace-nowrap"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
                 >
                   <Globe className="w-3.5 h-3.5" />
                   Portfolio
@@ -444,7 +529,7 @@ export function CvStudioView({
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer whitespace-nowrap"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   PDF
@@ -453,13 +538,41 @@ export function CvStudioView({
                   type="button"
                   onClick={handleSaveProfile}
                   disabled={saving}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg disabled:opacity-60 cursor-pointer whitespace-nowrap"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg disabled:opacity-60 cursor-pointer whitespace-nowrap shrink-0"
                 >
                   <Save className="w-3.5 h-3.5" />
                   {saving ? 'Sauvegarde...' : 'Enregistrer'}
                 </button>
               </div>
             </div>
+
+            {(localAudit || aiSuggestions.length > 0) && (
+              <div className="pb-4 border-b border-slate-200 space-y-2">
+                {localAudit && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-slate-800">
+                      Complétude &amp; lisibilité recruteur
+                    </span>
+                    <span className="font-mono font-bold text-blue-700 tabular-nums">
+                      {localAudit.completenessPct}%
+                    </span>
+                  </div>
+                )}
+                {localAudit && localAudit.improvements.length > 0 && (
+                  <p className="text-xs text-slate-500">
+                    Pistes : {localAudit.improvements.slice(0, 2).join(' · ')}
+                  </p>
+                )}
+                {aiSuggestions.length > 0 && (
+                  <div className="text-xs text-slate-700 space-y-1 pt-1">
+                    <p className="font-semibold text-amber-800">Améliorations appliquées :</p>
+                    {aiSuggestions.map((s) => (
+                      <p key={s}>• {s}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Identity */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

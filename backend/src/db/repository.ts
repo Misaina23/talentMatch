@@ -25,21 +25,11 @@ function toPublicUser(u: UserRecord): PublicUser {
   };
 }
 
+import { computeDetailedMatch } from '../services/matchingEngine.ts';
+export { computeDetailedMatch };
+
 export function computeSkillMatch(candidateSkills: string[], jobRequirements: string[]): number {
-  if (!jobRequirements.length) return 75;
-  const normalizedCandidate = new Set(candidateSkills.map((s) => s.trim().toLowerCase()));
-  let matched = 0;
-  for (const req of jobRequirements) {
-    const r = req.trim().toLowerCase();
-    if (
-      normalizedCandidate.has(r) ||
-      Array.from(normalizedCandidate).some((c) => c.includes(r) || r.includes(c))
-    ) {
-      matched += 1;
-    }
-  }
-  const ratio = matched / jobRequirements.length;
-  return Math.min(99, Math.max(28, Math.round(32 + ratio * 67)));
+  return computeDetailedMatch({ skills: candidateSkills }, { title: '', requirements: jobRequirements }).score;
 }
 
 class TalentMatchRepository {
@@ -608,7 +598,20 @@ class TalentMatchRepository {
     const job = jobs.find((j) => j.id === jobId);
     if (!job) throw new Error('Offre introuvable');
     const profile = await this.getCandidateProfileByUserId(candidateId);
-    const matchScore = computeSkillMatch(profile?.skills ?? [], job.requirements);
+    const matchScore = computeDetailedMatch(
+      {
+        skills: profile?.skills ?? [],
+        headline: profile?.headline,
+        experienceYears: profile?.experienceYears,
+        location: profile?.location,
+      },
+      {
+        title: job.title,
+        requirements: job.requirements,
+        location: job.location,
+        workMode: job.workMode,
+      }
+    ).score;
     const now = new Date().toISOString();
     const id = `app_${Date.now().toString(36)}`;
 
@@ -713,6 +716,48 @@ class TalentMatchRepository {
           candidateHeadline: prof?.headline ?? '',
         };
       });
+  }
+
+  async updateApplicationStatus(
+    applicationId: string,
+    recruiterId: string,
+    status: ApplicationRecord['status']
+  ): Promise<ApplicationRecord> {
+    if (this.pool) {
+      const pool = await this.ensurePgReady();
+      const { rows } = await pool.query(
+        `UPDATE applications a
+         SET status = $1
+         FROM jobs j
+         WHERE a.id = $2 AND j.id = a.job_id AND j.recruiter_id = $3
+         RETURNING a.*`,
+        [status, applicationId, recruiterId]
+      );
+      if (!rows[0]) {
+        throw new Error('Candidature introuvable ou accès non autorisé');
+      }
+      const r = rows[0];
+      return {
+        id: r.id,
+        jobId: r.job_id,
+        candidateId: r.candidate_id,
+        coverNote: r.cover_note,
+        matchScore: r.match_score,
+        status: r.status,
+        createdAt: new Date(r.created_at).toISOString(),
+      };
+    }
+
+    const store = this.getLocalStore();
+    const app = store.applications.find((a) => a.id === applicationId);
+    if (!app) throw new Error('Candidature introuvable');
+    const job = store.jobs.find((j) => j.id === app.jobId);
+    if (!job || job.recruiterId !== recruiterId) {
+      throw new Error('Accès refusé pour modifier cette candidature');
+    }
+    app.status = status;
+    this.saveLocalStore();
+    return app;
   }
 
   async listConversationsForUser(userId: string): Promise<

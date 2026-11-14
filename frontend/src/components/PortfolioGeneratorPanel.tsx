@@ -10,6 +10,7 @@ interface PortfolioGeneratorPanelProps {
 export function PortfolioGeneratorPanel({ profile }: PortfolioGeneratorPanelProps) {
   const [framework, setFramework] = useState<'tailwind' | 'bootstrap'>('tailwind');
   const [stylePreset, setStylePreset] = useState<'editorial' | 'dark-tech' | 'corporate'>('editorial');
+  const [targetObjective, setTargetObjective] = useState('');
   const [viewMode, setViewMode] = useState<'preview' | 'code'>('preview');
   const [viewportWidth, setViewportWidth] = useState<'desktop' | 'mobile'>('desktop');
 
@@ -30,6 +31,7 @@ export function PortfolioGeneratorPanel({ profile }: PortfolioGeneratorPanelProp
         profile,
         framework: targetFramework,
         style: targetStyle,
+        targetObjective: targetObjective.trim() || undefined,
       });
       setGeneratedHtml(res.html);
       setGeneratedBy(res.generatedBy);
@@ -173,6 +175,19 @@ export function PortfolioGeneratorPanel({ profile }: PortfolioGeneratorPanelProp
               ))}
             </div>
           </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+            Objectif ou poste ciblé pour personnaliser l’accroche (optionnel)
+          </label>
+          <input
+            type="text"
+            value={targetObjective}
+            onChange={(e) => setTargetObjective(e.target.value)}
+            placeholder="Ex: Missions Freelance React / PostgreSQL pour fintechs européennes"
+            className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-blue-700"
+          />
         </div>
       </div>
 

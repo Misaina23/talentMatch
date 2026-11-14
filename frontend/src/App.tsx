@@ -12,6 +12,7 @@ import {
   Application,
   CandidateProfile,
   ConversationSummary,
+  CVAudit,
   Job,
   User,
   UserRole,
@@ -24,6 +25,7 @@ export default function App() {
   const [candidates, setCandidates] = useState<CandidateProfile[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
   const [myProfile, setMyProfile] = useState<CandidateProfile | null>(null);
+  const [myAudit, setMyAudit] = useState<CVAudit | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
 
@@ -45,6 +47,7 @@ export default function App() {
     if (!currentUser) {
       setApplications([]);
       setMyProfile(null);
+      setMyAudit(null);
       setConversations([]);
       setActiveConversationId(null);
       return;
@@ -53,12 +56,15 @@ export default function App() {
       const [appsRes, convRes, profRes, jobsRes] = await Promise.all([
         api.listMyApplications(),
         api.listConversations(),
-        currentUser.role === 'candidate' ? api.getMyProfile() : Promise.resolve({ profile: null }),
+        currentUser.role === 'candidate'
+          ? api.getMyProfile()
+          : Promise.resolve({ profile: null, audit: null }),
         api.listJobs(),
       ]);
       setApplications(appsRes.applications);
       setConversations(convRes.conversations);
       setMyProfile(profRes.profile);
+      setMyAudit(profRes.audit ?? null);
       setJobs(jobsRes.jobs);
       setActiveConversationId((prev) => prev || convRes.conversations[0]?.id || null);
     } catch (err) {
@@ -163,6 +169,11 @@ export default function App() {
                 onSearchQueryChange={setSearchQuery}
                 onJobCreated={(job) => setJobs((prev) => [job, ...prev])}
                 onApplicationSubmitted={(app) => setApplications((prev) => [app, ...prev])}
+                onApplicationUpdated={(updated) =>
+                  setApplications((prev) =>
+                    prev.map((a) => (a.id === updated.id ? { ...a, ...updated } : a))
+                  )
+                }
                 onStartChat={handleStartChat}
                 onRequireAuth={() => setAuthModalOpen(true)}
               />
@@ -184,8 +195,12 @@ export default function App() {
               <CvStudioView
                 user={user}
                 profile={myProfile}
-                onProfileUpdated={(updated) => {
+                audit={myAudit}
+                onProfileUpdated={(updated, nextAudit) => {
                   setMyProfile(updated);
+                  if (nextAudit !== undefined) {
+                    setMyAudit(nextAudit);
+                  }
                   refreshPublicData();
                 }}
                 onRequireAuth={() => setAuthModalOpen(true)}
