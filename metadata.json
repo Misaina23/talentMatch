@@ -1,0 +1,6 @@
+{
+  "name": "TalentMatch",
+  "description": "Plateforme de recrutement, recherche d'emploi, création de CV moderne, parsing intelligent de CV et messagerie sécurisée recruteur-candidat.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
