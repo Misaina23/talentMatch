@@ -5,6 +5,11 @@ import multer from 'multer';
 import { computeSkillMatch, repository } from './db/repository.ts';
 import { AuthRequest, optionalAuth, requireAuth, signAuthToken } from './middleware/auth.ts';
 import { parseResumeIntelligently } from './services/cvParser.ts';
+import {
+  generatePortfolioFromCV,
+  PortfolioFramework,
+  PortfolioStyle,
+} from './services/portfolioGenerator.ts';
 import { UserRole } from './types.ts';
 import { broadcastToUsers } from './ws/chatServer.ts';
 
@@ -315,6 +320,54 @@ export function createApiApp() {
       console.error('CV Parse error:', error);
       res.status(400).json({
         error: error instanceof Error ? error.message : 'Erreur lors de l’analyse intelligente du CV.',
+      });
+    }
+  });
+
+  // --- Portfolio Generator from CV (HTML + Tailwind/Bootstrap + JS) ---
+  app.post('/api/portfolio/generate', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const { profile, framework, style } = req.body as {
+        profile?: any;
+        framework?: PortfolioFramework;
+        style?: PortfolioStyle;
+      };
+
+      if (!profile || !profile.fullName) {
+        return res.status(400).json({
+          error: 'Veuillez d’abord charger ou renseigner un CV dans le studio.',
+        });
+      }
+
+      const fw: PortfolioFramework = framework === 'bootstrap' ? 'bootstrap' : 'tailwind';
+      const st: PortfolioStyle =
+        style === 'dark-tech' || style === 'corporate' ? style : 'editorial';
+
+      const result = await generatePortfolioFromCV({
+        profile: {
+          fullName: String(profile.fullName || 'Candidat'),
+          headline: String(profile.headline || ''),
+          email: String(profile.email || ''),
+          phone: String(profile.phone || ''),
+          location: String(profile.location || ''),
+          website: String(profile.website || ''),
+          availability: String(profile.availability || ''),
+          experienceYears: Number(profile.experienceYears || 0),
+          summary: String(profile.summary || ''),
+          skills: Array.isArray(profile.skills) ? profile.skills : [],
+          experiences: Array.isArray(profile.experiences) ? profile.experiences : [],
+          education: Array.isArray(profile.education) ? profile.education : [],
+          languages: Array.isArray(profile.languages) ? profile.languages : [],
+        },
+        framework: fw,
+        style: st,
+      });
+
+      res.json(result);
+    } catch (error) {
+      console.error('Portfolio generate error:', error);
+      res.status(500).json({
+        error: 'Impossible de générer le portfolio à partir de ce CV.',
       });
     }
   });

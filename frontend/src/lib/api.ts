@@ -163,6 +163,22 @@ export const api = {
     });
   },
 
+  async generatePortfolio(payload: {
+    profile: CandidateProfile;
+    framework: 'tailwind' | 'bootstrap';
+    style: 'editorial' | 'dark-tech' | 'corporate';
+  }): Promise<{
+    html: string;
+    framework: 'tailwind' | 'bootstrap';
+    style: 'editorial' | 'dark-tech' | 'corporate';
+    generatedBy: 'gemini' | 'template';
+  }> {
+    return request('/api/portfolio/generate', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
   async listConversations(): Promise<{ conversations: ConversationSummary[] }> {
     return request<{ conversations: ConversationSummary[] }>('/api/conversations');
   },

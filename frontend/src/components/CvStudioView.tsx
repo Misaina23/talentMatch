@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   FileText,
   FileUp,
+  Globe,
   Plus,
   Printer,
   Save,
@@ -11,6 +12,7 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api.ts';
 import { CandidateProfile, ParsedCV, User } from '../types.ts';
+import { PortfolioGeneratorPanel } from './PortfolioGeneratorPanel.tsx';
 
 interface CvStudioViewProps {
   user: User | null;
@@ -85,7 +87,7 @@ export function CvStudioView({
   onProfileUpdated,
   onRequireAuth,
 }: CvStudioViewProps) {
-  const [studioMode, setStudioMode] = useState<'import' | 'builder'>('import');
+  const [studioMode, setStudioMode] = useState<'import' | 'builder' | 'portfolio'>('import');
   const [draft, setDraft] = useState<CandidateProfile>(profile || EMPTY_PROFILE);
   const [newSkill, setNewSkill] = useState('');
 
@@ -270,6 +272,18 @@ export function CvStudioView({
             <FileText className="w-3.5 h-3.5" />
             Éditeur &amp; Aperçu CV
           </button>
+          <button
+            type="button"
+            onClick={() => setStudioMode('portfolio')}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              studioMode === 'portfolio'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Globe className="w-3.5 h-3.5" />
+            Portfolio HTML / JS
+          </button>
         </div>
       </div>
 
@@ -291,7 +305,9 @@ export function CvStudioView({
         </div>
       )}
 
-      {studioMode === 'import' ? (
+      {studioMode === 'portfolio' ? (
+        <PortfolioGeneratorPanel profile={draft} />
+      ) : studioMode === 'import' ? (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           <form
             onSubmit={handleParseAndAutoLoad}
@@ -400,14 +416,14 @@ export function CvStudioView({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Left: Structured Editor */}
           <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-6 space-y-5">
-            <div className="flex items-center justify-between gap-2 pb-4 border-b border-slate-200">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-4 border-b border-slate-200">
               <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
                 {(['editorial', 'executive', 'minimal'] as const).map((tpl) => (
                   <button
                     key={tpl}
                     type="button"
                     onClick={() => setDraft({ ...draft, cvTemplate: tpl })}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md capitalize cursor-pointer ${
+                    className={`px-2.5 py-1 text-xs font-medium rounded-md capitalize cursor-pointer whitespace-nowrap ${
                       draft.cvTemplate === tpl ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
                     }`}
                   >
@@ -419,8 +435,16 @@ export function CvStudioView({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={() => setStudioMode('portfolio')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg cursor-pointer whitespace-nowrap"
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  Portfolio
+                </button>
+                <button
+                  type="button"
                   onClick={() => window.print()}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer whitespace-nowrap"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   PDF
@@ -429,7 +453,7 @@ export function CvStudioView({
                   type="button"
                   onClick={handleSaveProfile}
                   disabled={saving}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg disabled:opacity-60 cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg disabled:opacity-60 cursor-pointer whitespace-nowrap"
                 >
                   <Save className="w-3.5 h-3.5" />
                   {saving ? 'Sauvegarde...' : 'Enregistrer'}
